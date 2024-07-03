@@ -1,0 +1,11 @@
+{
+  "domain": "tigo",
+  "name": "Tigo cloud",
+  "codeowners": ["@MartinStoffel"],
+  "config_flow": true,
+  "dependencies": ["http"],
+  "documentation": "https://github.com/MartinStoffel/tigo",
+  "iot_class": "cloud_polling",
+  "requirements": [],
+  "version": "0.1.0"
+}
