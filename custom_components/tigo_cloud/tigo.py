@@ -38,7 +38,7 @@ class CookieCache:
     def getSystem(self) -> any:
         """Return the system description."""
         if self._system is None:
-            asyncio.run(self.__getCookie())
+            asyncio.run(await self.__getCookie())
 
         return self._system
 
