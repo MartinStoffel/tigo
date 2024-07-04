@@ -42,7 +42,7 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     # If the authentication is wrong:
     # InvalidAuth
     try:
-        system = await cookieCache.getSystem()
+        system = await cookieCache.getSystemAsync()
     except Exception as e:
         msg = f"Exception within tigo::validate_input {e.__class__} {e}"
         _LOGGER.warning(msg)
