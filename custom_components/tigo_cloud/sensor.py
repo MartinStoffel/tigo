@@ -71,7 +71,7 @@ PANEL_PROPERTIES = {
         "attr_icon": "mdi:alpha-v-circle",
     },
     "iin": {
-        "name": "Current lin",
+        "name": "Current In",
         "native_unit_of_measurement": UnitOfElectricCurrent.AMPERE,
         "device_class": SensorDeviceClass.CURRENT,
         "state_class": SensorStateClass.MEASUREMENT,
