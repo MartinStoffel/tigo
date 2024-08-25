@@ -95,8 +95,11 @@ async def async_setup_entry(
 
     entities = []
     for panel in coordinator.get_panels():
-        for key in PANEL_PROPERTIES.keys():
-            entities.append(TigoPanelSensor(panel, coordinator, key))
+        for key in PANEL_PROPERTIES.keys(): 
+            try:
+                entities.append(TigoPanelSensor(panel, coordinator, key))
+            except:
+                pass
 
     add_entities(entities)
 
