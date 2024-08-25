@@ -79,7 +79,7 @@ PANEL_PROPERTIES = {
     },
     "reclaimedPower": {
         "name": "Reclaimed Power",
-        "native_unit_of_measurement": UnitOfEnergy.WATT,
+        "native_unit_of_measurement": UnitOfPower.WATT,
         "device_class": SensorDeviceClass.POWER,
         "state_class": SensorStateClass.MEASUREMENT,
         "attr_icon": "mdi:solar-power-variant",
