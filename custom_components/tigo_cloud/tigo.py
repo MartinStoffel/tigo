@@ -123,6 +123,8 @@ class TigoData:
             self._data["energyRaw"] = val
             self._data["energy"] = {"dataset": val["dataset"]}
 
+            time=self._lastTime 
+            
             for x in val["datasetLastData"]:
                 time = val["datasetLastData"][x][11:16]
                 break
