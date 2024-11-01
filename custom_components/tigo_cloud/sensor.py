@@ -25,7 +25,7 @@ PANEL_PROPERTIES = {
         "name": "Energy",
         "native_unit_of_measurement": UnitOfEnergy.WATT_HOUR,
         "device_class": SensorDeviceClass.ENERGY,
-        "state_class": SensorStateClass.TOTAL,
+        "state_class": SensorStateClass.TOTAL_INCREASING,
         "attr_icon": "mdi:solar-power-variant-outline",
     },
     "pin": {
