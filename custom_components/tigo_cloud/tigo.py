@@ -1,6 +1,5 @@
 """Business Logic for Tigo."""
 
-import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
 
@@ -12,7 +11,6 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import TIGO_URL
 
 _LOGGER = logging.getLogger(__name__)
-
 
 # Time between updating data
 SCAN_INTERVAL = timedelta(minutes=1)
@@ -28,6 +26,7 @@ class CookieCache:
         self._systemid = systemid
         self._system = None
         self._cookie = None
+        self._cookieJar = aiohttp.CookieJar()
         self._validTill = datetime(1, 1, 1, tzinfo=timezone.utc)
 
     async def getAuthHeader(self) -> str:
@@ -38,6 +37,10 @@ class CookieCache:
     def getSystem(self) -> any:
         """Return the system description."""
         return self._system
+
+    def getCookieJar(self) -> any:
+        """Return the cookieJar."""
+        return self._cookieJar
 
     async def getSystemAsync(self) -> any:
         """Renutns sthe system description async, for config_flow."""
@@ -56,7 +59,7 @@ class CookieCache:
         if self._validTill > now:
             return self._cookie
 
-        async with aiohttp.ClientSession(cookie_jar=aiohttp.CookieJar()) as session:
+        async with aiohttp.ClientSession(cookie_jar=self._cookieJar) as session:
             request = await session.get(TIGO_URL)
             text = await request.text()
             for item in text.split("\n"):
@@ -107,10 +110,22 @@ class TigoData:
         self._lastTime = None
         self._data = {}
 
+    def get_value(self, graph) -> any:
+        """Return the reading."""
+        result = 0
+        for serie in graph["series"]:
+            if serie["id"] == "solar_total":
+                for data in serie["data"]:
+                    if data[1] is not None:
+                        result = data[1]
+                break
+        return result
+
     async def fetch_data(self) -> None:
         """Get the data from the web api."""
         authHeader = await self._cookieCahe.getAuthHeader()
-        async with aiohttp.ClientSession() as session:
+        cookieJar = self._cookieCahe.getCookieJar()
+        async with aiohttp.ClientSession(cookie_jar=cookieJar) as session:
             date = datetime.today().date()
             query = f"/api/v4/system/summary/aggenergy?system_id={self._systemId}&date={date}"
             request = await session.get(TIGO_URL + query, headers=authHeader)
@@ -123,8 +138,8 @@ class TigoData:
             self._data["energyRaw"] = val
             self._data["energy"] = {"dataset": val["dataset"]}
 
-            time=self._lastTime 
-            
+            time = self._lastTime
+
             for x in val["datasetLastData"]:
                 time = val["datasetLastData"][x][11:16]
                 break
@@ -151,6 +166,17 @@ class TigoData:
                         _LOGGER.warning(msg)
                         # nop
 
+            # Get sumary data
+            for agg in ("now", "minute", "hour", "day", "month", "year"):
+                try:
+                    query = f"/api/v4/data/aggregate?systemId={self._systemId}&view=gen&output=echart&type=bar&agg={agg}&start={date}&end={date}&reclaimed=true"
+                    request = await session.get(TIGO_URL + query, headers=authHeader)
+                    self._data[agg] = self.get_value(await request.json())
+                except Exception as e:
+                    msg = f"{e.__class__} occurred details: {e}"
+                    _LOGGER.warning(msg)
+                    # nop
+
     def get_system(self) -> any:
         """Return the system data."""
         return self._cookieCahe.getSystem()
@@ -158,6 +184,10 @@ class TigoData:
     def get_reading(self, property) -> any:
         """Return readings of property."""
         return self._data.get(property)["dataset"]
+
+    def get_summary(self, property) -> any:
+        """Retun summary reading."""
+        return self._data.get(property)
 
 
 # see https://developers.home-assistant.io/docs/integration_fetching_data/
@@ -188,6 +218,10 @@ class TigoCoordinator(DataUpdateCoordinator):
         """Get the actual reaging."""
         reading = self.tigo_data.get_reading(property)
         return reading.get(str(panelId), None)
+
+    def get_summary(self, property) -> any:
+        """Get the summary reading."""
+        return self.tigo_data.get_summary(property)
 
     def get_data(self) -> any:
         """Get the whole reaging data."""
