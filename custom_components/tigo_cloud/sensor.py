@@ -90,18 +90,11 @@ PANEL_PROPERTIES = {
 
 SUMMARY_PROPERTIES = {
     "now": {
-        "name": "Current production",
+        "name": "Current Production",
         "native_unit_of_measurement": UnitOfPower.WATT,
         "device_class": SensorDeviceClass.POWER,
         "state_class": SensorStateClass.MEASUREMENT,
         "attr_icon": "mdi:solar-power-variant",
-    },
-    "minute": {
-        "name": "Prouctin last Minute",
-        "native_unit_of_measurement": UnitOfEnergy.WATT_HOUR,
-        "device_class": SensorDeviceClass.ENERGY,
-        "state_class": SensorStateClass.TOTAL_INCREASING,
-        "attr_icon": "mdi:solar-power-variant-outline",
     },
     "hour": {
         "name": "Hourly Production",
@@ -118,14 +111,21 @@ SUMMARY_PROPERTIES = {
         "attr_icon": "mdi:solar-power-variant-outline",
     },
     "month": {
-        "name": "Production this Month",
+        "name": "Monthly Production",
         "native_unit_of_measurement": UnitOfEnergy.WATT_HOUR,
         "device_class": SensorDeviceClass.ENERGY,
         "state_class": SensorStateClass.TOTAL_INCREASING,
         "attr_icon": "mdi:solar-power-variant-outline",
     },
     "year": {
-        "name": "Production Year to date",
+        "name": "Yearly Production",
+        "native_unit_of_measurement": UnitOfEnergy.WATT_HOUR,
+        "device_class": SensorDeviceClass.ENERGY,
+        "state_class": SensorStateClass.TOTAL_INCREASING,
+        "attr_icon": "mdi:solar-power-variant-outline",
+    },
+    "allTime": {
+        "name": "All Time Production",
         "native_unit_of_measurement": UnitOfEnergy.WATT_HOUR,
         "device_class": SensorDeviceClass.ENERGY,
         "state_class": SensorStateClass.TOTAL_INCREASING,

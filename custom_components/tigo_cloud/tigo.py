@@ -167,7 +167,7 @@ class TigoData:
                         # nop
 
             # Get sumary data
-            for agg in ("now", "minute", "hour", "day", "month", "year"):
+            for agg in ("now", "hour", "day", "month", "year"):
                 try:
                     query = f"/api/v4/data/aggregate?systemId={self._systemId}&view=gen&output=echart&type=bar&agg={agg}&start={date}&end={date}&reclaimed=true"
                     request = await session.get(TIGO_URL + query, headers=authHeader)
@@ -176,6 +176,15 @@ class TigoData:
                     msg = f"{e.__class__} occurred details: {e}"
                     _LOGGER.warning(msg)
                     # nop
+            try:
+                query = f"/fleet/system/overview/data-lifetime?sysid={self._systemId}&range=lifetime"
+                request = await session.get(TIGO_URL + query, headers=authHeader)
+                value = await request.json()
+                self._data["allTime"] = value["energy"]
+            except Exception as e:
+                msg = f"{e.__class__} occurred details: {e}"
+                _LOGGER.warning(msg)
+                # nop
 
     def get_system(self) -> any:
         """Return the system data."""
