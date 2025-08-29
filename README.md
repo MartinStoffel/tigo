@@ -13,4 +13,6 @@ Added current, houerly, daily, monthly and yearly production as well as all time
 
 Any feedback is welcome!
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=MartinStoffel&repository=tigo&category=Integration)
+
 You can install via HACS by adding this repository or manually by creating custom_components/tigo_cloud in your config directory and add the files of the respective directory in this repo.
