@@ -1,5 +1,5 @@
 # Tigo
-Integration of Tigo into home assistant
+Integration of the Tigo Cloud into Home Assistant
 
 Currently quite basic, just integrates the panel data, since that is the Tigo hardware I have. 
 
