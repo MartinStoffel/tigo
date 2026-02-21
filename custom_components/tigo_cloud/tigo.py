@@ -129,7 +129,6 @@ class TigoData:
             date = datetime.today().date()
             query = f"/api/v4/system/summary/aggenergy?system_id={self._systemId}&date={date}"
             request = await session.get(TIGO_URL + query, headers=authHeader)
-            # auth failed?
             if request.status != 200:
                 self._cookieCahe.resetCookie()
                 return
@@ -139,7 +138,6 @@ class TigoData:
             self._data["energy"] = {"dataset": val["dataset"]}
 
             time = self._lastTime
-
             for x in val["datasetLastData"]:
                 time = val["datasetLastData"][x][11:16]
                 break
@@ -166,7 +164,27 @@ class TigoData:
                         _LOGGER.warning(msg)
                         # nop
 
-            # Get sumary data
+            # Fetch instant powers from inverter data
+            try:
+                sensor_query = f"/api/v4/data/aggregate?systemId={self._systemId}&aggregate=now&objectTypeIds[]=14&objectTypeIds[]=32&objectTypeIds[]=36&objectTypeIds[]=46&objectTypeIds[]=56&objectTypeIds[]=58&objectTypeIds[]=62&objectTypeIds[]=57"
+                sensor_request = await session.get(TIGO_URL + sensor_query, headers=authHeader)
+                if sensor_request.status == 200:
+                    sensor_val = await sensor_request.json()
+                    objectTypeIds = sensor_val.get("objectTypeIds", {})
+                    self._data["gridPower"] = objectTypeIds.get("14", [None])[0]
+                    self._data["homePower"] = objectTypeIds.get("36", [None])[0]
+                    self._data["batteryPercentage"] = objectTypeIds.get("46", [None])[0]
+                    self._data["batteryPower"] = objectTypeIds.get("56", [None])[0]
+                    self._data["solarPower"] = objectTypeIds.get("62", [None])[0]
+                    self._data["objectTypeIds"] = objectTypeIds
+                    self._data["dataAvailable"] = sensor_val.get("dataAvailable", False)
+                    self._data["time"] = sensor_val.get("time", [None])[0]
+                else:
+                    _LOGGER.warning(f"Sensor aggregate fetch failed: {sensor_request.status}")
+            except Exception as e:
+                msg = f"Sensor aggregate fetch error: {e.__class__} details: {e}"
+                _LOGGER.warning(msg)
+
             for agg in ("now", "hour", "day", "month", "year"):
                 try:
                     query = f"/api/v4/data/aggregate?systemId={self._systemId}&view=gen&output=echart&type=bar&agg={agg}&start={date}&end={date}&reclaimed=true"
@@ -232,6 +250,3 @@ class TigoCoordinator(DataUpdateCoordinator):
         """Get the summary reading."""
         return self.tigo_data.get_summary(property)
 
-    def get_data(self) -> any:
-        """Get the whole reaging data."""
-        return self.htigo_data.get_data()

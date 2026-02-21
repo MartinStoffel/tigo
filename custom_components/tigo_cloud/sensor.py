@@ -14,6 +14,7 @@ from homeassistant.const import (
     UnitOfEnergy,
     UnitOfPower,
     UnitOfTemperature,
+    PERCENTAGE,
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -131,6 +132,41 @@ SUMMARY_PROPERTIES = {
         "state_class": SensorStateClass.TOTAL_INCREASING,
         "attr_icon": "mdi:solar-power-variant-outline",
     },
+    "solarPower" : {
+        "name": "Real time solar power",
+        "native_unit_of_measurement": UnitOfPower.WATT,
+        "device_class": None,
+        "state_class": SensorStateClass.MEASUREMENT,
+        "attr_icon": "mdi:solar-power-variant-outline",
+    },
+    "batteryPower" : {
+        "name": "Real time battery power",
+        "native_unit_of_measurement": UnitOfPower.WATT,
+        "device_class": None,
+        "state_class": SensorStateClass.MEASUREMENT,
+        "attr_icon": "mdi:home-battery-outline",
+    },
+    "homePower" : {
+        "name": "Real time home power",
+        "native_unit_of_measurement": UnitOfPower.WATT,
+        "device_class": None,
+        "state_class": SensorStateClass.MEASUREMENT,
+        "attr_icon": "mdi:home-lightning-bolt-outline",
+    },
+    "gridPower" : {
+        "name": "Real time grid power",
+        "native_unit_of_measurement": UnitOfPower.WATT,
+        "device_class": None,
+        "state_class": SensorStateClass.MEASUREMENT,
+        "attr_icon": "mdi:transmission-tower",
+    },
+    "batteryPercentage" : {
+        "name": "Real time battery percentage",
+        "native_unit_of_measurement": PERCENTAGE,
+        "device_class": None,
+        "state_class": SensorStateClass.MEASUREMENT,
+        "attr_icon": "mdi:home-lightning-bolt-outline",
+    }
 }
 
 
