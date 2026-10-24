@@ -5,15 +5,17 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import aiohttp
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .const import CONF_SYSTEMID, DOMAIN
-from .tigo import CookieCache
+from .tigo import CookieCache, TigoAuthError, TigoError
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -32,30 +34,27 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
     """
 
+    session = async_create_clientsession(hass, auto_cleanup=False)
     cookieCache = CookieCache(
-        data[CONF_USERNAME], data[CONF_PASSWORD], data[CONF_SYSTEMID]
+        session, data[CONF_USERNAME], data[CONF_PASSWORD], data[CONF_SYSTEMID]
     )
 
-    system = None
-    # If you cannot connect:
-    # throw CannotConnect
-    # If the authentication is wrong:
-    # InvalidAuth
     try:
-        system = await cookieCache.getSystemAsync()
-    except Exception as e:
+        await cookieCache.getSystemAsync()
+    except TigoAuthError as e:
+        raise InvalidAuth from e
+    except (TigoError, aiohttp.ClientError, TimeoutError) as e:
         msg = f"Exception within tigo::validate_input {e.__class__} {e}"
         _LOGGER.warning(msg)
         raise CannotConnect from e
-
-    if system is None:
-        raise InvalidAuth
+    finally:
+        await session.close()
 
     # Return info that you want to store in the config entry.
     return {"title": f"Tigo Cloud {data[CONF_SYSTEMID]}"}
 
 
-class ConfigFlow(ConfigFlow, domain=DOMAIN):
+class TigoConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Tigo Cloud Sensor."""
 
     VERSION = 1
@@ -72,7 +71,7 @@ class ConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "cannot_connect"
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
-            except Exception as e:
+            except Exception:
                 _LOGGER.exception("Unexpected exception")
                 errors["base"] = "unknown"
             else:

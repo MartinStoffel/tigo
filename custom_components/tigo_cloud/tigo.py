@@ -2,11 +2,13 @@
 
 from datetime import datetime, timedelta, timezone
 import logging
+from typing import Any
 
 import aiohttp
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import TIGO_URL
 
@@ -16,34 +18,44 @@ _LOGGER = logging.getLogger(__name__)
 SCAN_INTERVAL = timedelta(minutes=1)
 
 
+class TigoError(Exception):
+    """Error talking to the Tigo cloud."""
+
+
+class TigoAuthError(TigoError):
+    """The Tigo cloud rejected the login."""
+
+
 class CookieCache:
     """Manages the cookie / auth bearer and also returns the system."""
 
-    def __init__(self, username: str, password: str, systemid: str) -> None:
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        username: str,
+        password: str,
+        systemid: str,
+    ) -> None:
         """Initialize the cache."""
+        self._session = session
         self._username = username
         self._password = password
         self._systemid = systemid
         self._system = None
         self._cookie = None
-        self._cookieJar = aiohttp.CookieJar()
         self._validTill = datetime(1, 1, 1, tzinfo=timezone.utc)
 
-    async def getAuthHeader(self) -> str:
+    async def getAuthHeader(self) -> dict[str, str]:
         """Return the Auth header."""
         cookie = await self.__getCookie()
         return {"accept": "application/json", "Authorization": f"Bearer {cookie.value}"}
 
-    def getSystem(self) -> any:
+    def getSystem(self) -> Any:
         """Return the system description."""
         return self._system
 
-    def getCookieJar(self) -> any:
-        """Return the cookieJar."""
-        return self._cookieJar
-
-    async def getSystemAsync(self) -> any:
-        """Renutns sthe system description async, for config_flow."""
+    async def getSystemAsync(self) -> Any:
+        """Returns the system description async, for config_flow."""
         if self._system is None:
             await self.__getCookie()
 
@@ -53,47 +65,62 @@ class CookieCache:
         """Reset validity to get a new cookie."""
         self._validTill = datetime(1, 1, 1, tzinfo=timezone.utc)
 
-    async def __getCookie(self) -> any:
+    async def getJson(self, query: str, headers: dict[str, str] | None = None) -> Any:
+        """Return the JSON answer of a GET request to the Tigo cloud."""
+        async with self._session.get(TIGO_URL + query, headers=headers) as response:
+            if response.status != 200:
+                raise TigoError(f"{query} returned status {response.status}")
+            return await response.json()
+
+    async def __getCookie(self) -> Any:
         """Get the cookie from a web login."""
         now = datetime.now(timezone.utc)
         if self._validTill > now:
             return self._cookie
 
-        async with aiohttp.ClientSession(cookie_jar=self._cookieJar) as session:
-            request = await session.get(TIGO_URL)
-            text = await request.text()
-            for item in text.split("\n"):
-                if "TIGO_CSRF_TOKEN" in item:
-                    csfr = item.split('"')[1]
-                    break
+        # Start with an empty jar, else the cookie of an earlier login would hide a
+        # rejected one.
+        self._session.cookie_jar.clear()
 
-            formData = {
-                "_csrf": csfr,
-                "LoginFormModel[login]": self._username,
-                "LoginFormModel[password]": self._password,
-                "LoginFormModel[remember_me]": "0",
-            }
+        async with self._session.get(TIGO_URL) as response:
+            if response.status != 200:
+                raise TigoError(f"Login page returned status {response.status}")
+            text = await response.text()
 
-            request = await session.post(TIGO_URL, data=formData)
+        csrf = None
+        for item in text.split("\n"):
+            if "TIGO_CSRF_TOKEN" in item:
+                csrf = item.split('"')[1]
+                break
+        if csrf is None:
+            raise TigoError("No CSRF token on the login page")
 
-            if request.status != 200:
-                _LOGGER.error("Connection failed")
+        formData = {
+            "_csrf": csrf,
+            "LoginFormModel[login]": self._username,
+            "LoginFormModel[password]": self._password,
+            "LoginFormModel[remember_me]": "0",
+        }
 
-            for f in session.cookie_jar:
-                if f.key == "wssJwt":
-                    self._cookie = f
-                    break
+        async with self._session.post(TIGO_URL, data=formData) as response:
+            status = response.status
 
-            request.close()
+        self._cookie = next(
+            (f for f in self._session.cookie_jar if f.key == "wssJwt"), None
+        )
+        if self._cookie is None:
+            # A rejected login shows the login form again.
+            if status in (200, 401, 403):
+                raise TigoAuthError("Login rejected, check username and password")
+            raise TigoError(f"Login failed with status {status}")
 
-            if self._system is None:
-                query = (
-                    "/system/summary/config?system_id="
-                    + self._systemid
-                    + "&resourceId=config&v=0.1.0&_=0"
-                )
-                request = await session.get(TIGO_URL + query)
-                self._system = await request.json()
+        if self._system is None:
+            query = (
+                "/system/summary/config?system_id="
+                + self._systemid
+                + "&resourceId=config&v=0.1.0&_=0"
+            )
+            self._system = await self.getJson(query)
 
         seconds = int(self._cookie["max-age"])
         self._validTill = now + timedelta(seconds=seconds, hours=-1)
@@ -103,99 +130,105 @@ class CookieCache:
 class TigoData:
     """Manages the cookie / auth bearer and also returns the system."""
 
-    def __init__(self, username: str, password: str, systemid: str) -> None:
+    def __init__(
+        self,
+        session: aiohttp.ClientSession,
+        username: str,
+        password: str,
+        systemid: str,
+    ) -> None:
         """Initialize the cache."""
-        self._cookieCahe = CookieCache(username, password, systemid)
+        self._cookieCache = CookieCache(session, username, password, systemid)
         self._systemId = systemid
         self._lastTime = None
         self._data = {}
 
-    def get_value(self, graph) -> any:
-        """Return the reading."""
-        result = 0
+    def get_value(self, graph) -> Any:
+        """Return the reading, None if the graph has no solar total."""
         for serie in graph["series"]:
             if serie["id"] == "solar_total":
+                result = 0
                 for data in serie["data"]:
                     if data[1] is not None:
                         result = data[1]
-                break
-        return result
+                return result
+        return None
 
     async def fetch_data(self) -> None:
         """Get the data from the web api."""
-        authHeader = await self._cookieCahe.getAuthHeader()
-        cookieJar = self._cookieCahe.getCookieJar()
-        async with aiohttp.ClientSession(cookie_jar=cookieJar) as session:
-            date = datetime.today().date()
-            query = f"/api/v4/system/summary/aggenergy?system_id={self._systemId}&date={date}"
-            request = await session.get(TIGO_URL + query, headers=authHeader)
-            # auth failed?
-            if request.status != 200:
-                self._cookieCahe.resetCookie()
-                return
+        authHeader = await self._cookieCache.getAuthHeader()
+        # Today in the Home Assistant time zone, the host may run in UTC.
+        date = dt_util.now().date()
+        query = f"/api/v4/system/summary/aggenergy?system_id={self._systemId}&date={date}"
+        try:
+            val = await self._cookieCache.getJson(query, authHeader)
+        except TigoError:
+            # The login may have expired, log in again on the next update.
+            self._cookieCache.resetCookie()
+            raise
 
-            val = await request.json()
-            self._data["energyRaw"] = val
-            self._data["energy"] = {"dataset": val["dataset"]}
+        self._data["energyRaw"] = val
+        self._data["energy"] = {"dataset": val["dataset"]}
 
-            time = self._lastTime
+        time = self._lastTime
 
-            for x in val["datasetLastData"]:
-                time = val["datasetLastData"][x][11:16]
-                break
-            if self._lastTime != time:
-                self._lastTime = time
-                for value in (
-                    "pin",
-                    "rssi",
-                    "pwm",
-                    "temp",
-                    "vin",
-                    "vout",
-                    "iin",
-                    "reclaimedPower",
-                ):
-                    try:
-                        query = f"/api/v4/system/summary/lastvalue?system_id={self._systemId}&resourceId=lastValue-{date}-{value}-{time}&v=0.1.0&_=0"
-                        request = await session.get(
-                            TIGO_URL + query, headers=authHeader
-                        )
-                        self._data[value] = await request.json()
-                    except Exception as e:
-                        msg = f"{e.__class__} occurred details: {e}"
-                        _LOGGER.warning(msg)
-                        # nop
-
-            # Get sumary data
-            for agg in ("now", "hour", "day", "month", "year"):
+        for x in val["datasetLastData"]:
+            time = val["datasetLastData"][x][11:16]
+            break
+        if self._lastTime != time:
+            self._lastTime = time
+            for value in (
+                "pin",
+                "rssi",
+                "pwm",
+                "temp",
+                "vin",
+                "vout",
+                "iin",
+                "reclaimedPower",
+            ):
                 try:
-                    query = f"/api/v4/data/aggregate?systemId={self._systemId}&view=gen&output=echart&type=bar&agg={agg}&start={date}&end={date}&reclaimed=true"
-                    request = await session.get(TIGO_URL + query, headers=authHeader)
-                    self._data[agg] = self.get_value(await request.json())
+                    query = f"/api/v4/system/summary/lastvalue?system_id={self._systemId}&resourceId=lastValue-{date}-{value}-{time}&v=0.1.0&_=0"
+                    self._data[value] = await self._cookieCache.getJson(
+                        query, authHeader
+                    )
                 except Exception as e:
                     msg = f"{e.__class__} occurred details: {e}"
                     _LOGGER.warning(msg)
-                    # nop
+                    # Show unknown rather than the reading of an earlier time.
+                    self._data.pop(value, None)
+
+        # Get summary data
+        for agg in ("now", "hour", "day", "month", "year"):
             try:
-                query = f"/fleet/system/overview/data-lifetime?sysid={self._systemId}&range=lifetime"
-                request = await session.get(TIGO_URL + query, headers=authHeader)
-                value = await request.json()
-                self._data["allTime"] = value["energy"]
+                query = f"/api/v4/data/aggregate?systemId={self._systemId}&view=gen&output=echart&type=bar&agg={agg}&start={date}&end={date}&reclaimed=true"
+                self._data[agg] = self.get_value(
+                    await self._cookieCache.getJson(query, authHeader)
+                )
             except Exception as e:
                 msg = f"{e.__class__} occurred details: {e}"
                 _LOGGER.warning(msg)
-                # nop
+                self._data.pop(agg, None)
+        try:
+            query = f"/fleet/system/overview/data-lifetime?sysid={self._systemId}&range=lifetime"
+            value = await self._cookieCache.getJson(query, authHeader)
+            self._data["allTime"] = value["energy"]
+        except Exception as e:
+            msg = f"{e.__class__} occurred details: {e}"
+            _LOGGER.warning(msg)
+            self._data.pop("allTime", None)
 
-    def get_system(self) -> any:
+    def get_system(self) -> Any:
         """Return the system data."""
-        return self._cookieCahe.getSystem()
+        return self._cookieCache.getSystem()
 
-    def get_reading(self, property) -> any:
-        """Return readings of property."""
-        return self._data.get(property)["dataset"]
+    def get_reading(self, property) -> Any:
+        """Return readings of property, None if not fetched."""
+        reading = self._data.get(property)
+        return reading.get("dataset") if reading else None
 
-    def get_summary(self, property) -> any:
-        """Retun summary reading."""
+    def get_summary(self, property) -> Any:
+        """Return summary reading."""
         return self._data.get(property)
 
 
@@ -216,22 +249,29 @@ class TigoCoordinator(DataUpdateCoordinator):
         self.tigo_data = tigo_data
 
     async def _async_update_data(self):
-        return await self.tigo_data.fetch_data()
+        try:
+            return await self.tigo_data.fetch_data()
+        except TigoError as e:
+            # Marks the sensors unavailable until an update succeeds.
+            raise UpdateFailed(str(e)) from e
 
-    def get_panels(self) -> any:
+    def get_panels(self) -> Any:
         """Return the panels of the system."""
         system = self.tigo_data.get_system()
         return [x for x in system["system"]["objects"] if x.get("B") == 2]
 
-    def get_reading(self, panelId, property) -> any:
-        """Get the actual reaging."""
+    def get_reading(self, panelId, property) -> Any:
+        """Get the actual reading."""
         reading = self.tigo_data.get_reading(property)
+        if reading is None:
+            return None
         return reading.get(str(panelId), None)
 
-    def get_summary(self, property) -> any:
+    def has_reading(self, property) -> bool:
+        """Return whether any panel has a reading of property."""
+        reading = self.tigo_data.get_reading(property)
+        return reading is not None and any(v is not None for v in reading.values())
+
+    def get_summary(self, property) -> Any:
         """Get the summary reading."""
         return self.tigo_data.get_summary(property)
-
-    def get_data(self) -> any:
-        """Get the whole reaging data."""
-        return self.htigo_data.get_data()

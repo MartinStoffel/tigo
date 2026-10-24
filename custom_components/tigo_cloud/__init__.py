@@ -5,19 +5,19 @@ from __future__ import annotations
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .const import CONF_PASSWORD, CONF_SYSTEMID, CONF_USERNAME, DOMAIN
 from .tigo import TigoCoordinator, TigoData
 
-# For your initial PR, limit it to 1 platform.
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 
 async def async_setup_entry(hass: HomeAssistant, config: ConfigEntry) -> bool:
     """Set up the element."""
-    hass.data.setdefault(DOMAIN, {})
-
     data = TigoData(
+        # A session of its own, as it keeps the login cookies. Closed on unload.
+        async_create_clientsession(hass),
         config.data.get(CONF_USERNAME),
         config.data.get(CONF_PASSWORD),
         config.data.get(CONF_SYSTEMID),

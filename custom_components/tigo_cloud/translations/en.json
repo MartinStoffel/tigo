@@ -10,11 +10,11 @@
         },
         "step": {
             "user": {
-		"description": "Enter the data used to login to https://ei.tigoenergy.com/",
+                "description": "Enter the data used to login to https://ei.tigoenergy.com/",
                 "data": {
-            "systemid":"System Id",
-		    "username": "e-mail",
-		    "password": "password"
+                    "systemid": "System Id",
+                    "username": "e-mail",
+                    "password": "password"
                 }
             }
         }

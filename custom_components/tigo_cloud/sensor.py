@@ -1,12 +1,13 @@
 """Sensors for Tigo."""
 
-import contextlib
+import logging
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     UnitOfElectricCurrent,
@@ -17,10 +18,11 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
+
+_LOGGER = logging.getLogger(__name__)
 
 PANEL_PROPERTIES = {
     "energy": {
@@ -52,7 +54,7 @@ PANEL_PROPERTIES = {
         "attr_icon": "mdi:square-wave",
     },
     "temp": {
-        "name": "Temperature ",
+        "name": "Temperature",
         "native_unit_of_measurement": UnitOfTemperature.CELSIUS,
         "device_class": SensorDeviceClass.TEMPERATURE,
         "state_class": SensorStateClass.MEASUREMENT,
@@ -135,26 +137,45 @@ SUMMARY_PROPERTIES = {
 
 
 async def async_setup_entry(
-    hass: HomeAssistant, config: ConfigType, add_entities: AddEntitiesCallback
+    hass: HomeAssistant, config: ConfigEntry, add_entities: AddEntitiesCallback
 ) -> None:
     """Set up the sensors."""
     coordinator = hass.data[DOMAIN][config.entry_id]
 
-    entities = []
+    panels = []
     for panel in coordinator.get_panels():
+        if all(key in panel for key in ("A", "C", "T")):
+            panels.append(panel)
+        else:
+            _LOGGER.warning("Skipping panel without id or label: %s", panel)
+
+    # Tigo only sends the data the license of the system covers, so a sensor is
+    # added once its data arrives, and never if it does not.
+    added: set[str] = set()
+
+    @callback
+    def add_new_sensors() -> None:
+        """Add the sensors whose data arrived for the first time."""
+        entities = []
         for key in PANEL_PROPERTIES:
-            with contextlib.suppress(Exception):
-                entities.append(TigoPanelSensor(panel, coordinator, key))
+            if key not in added and coordinator.has_reading(key):
+                added.add(key)
+                entities += [TigoPanelSensor(panel, coordinator, key) for panel in panels]
 
-    for key in SUMMARY_PROPERTIES:
-        with contextlib.suppress(Exception):
-            entities.append(TigoSummarySensor(coordinator, key))
+        for key in SUMMARY_PROPERTIES:
+            if key not in added and coordinator.get_summary(key) is not None:
+                added.add(key)
+                entities.append(TigoSummarySensor(coordinator, key))
 
-    add_entities(entities)
+        if entities:
+            add_entities(entities)
+
+    add_new_sensors()
+    config.async_on_unload(coordinator.async_add_listener(add_new_sensors))
 
 
 class TigoSummarySensor(CoordinatorEntity, SensorEntity):
-    """The Tigo summary sensor, showing daily, monthly ans yearly stats."""
+    """The Tigo summary sensor, showing daily, monthly and yearly stats."""
 
     def __init__(self, coordinator, property) -> None:
         """Initialize the sensor."""
@@ -186,7 +207,7 @@ class TigoSummarySensor(CoordinatorEntity, SensorEntity):
 
 
 class TigoPanelSensor(CoordinatorEntity, SensorEntity):
-    """The Tigo panle sensor."""
+    """The Tigo panel sensor."""
 
     def __init__(self, panel, coordinator, property) -> None:
         """Initialize the sensor."""
