@@ -34,9 +34,12 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
     Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
     """
 
-    session = async_create_clientsession(hass, auto_cleanup=False)
+    # Home Assistant closes this session itself, it must not be closed here.
     cookieCache = CookieCache(
-        session, data[CONF_USERNAME], data[CONF_PASSWORD], data[CONF_SYSTEMID]
+        async_create_clientsession(hass),
+        data[CONF_USERNAME],
+        data[CONF_PASSWORD],
+        data[CONF_SYSTEMID],
     )
 
     try:
@@ -47,8 +50,6 @@ async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str,
         msg = f"Exception within tigo::validate_input {e.__class__} {e}"
         _LOGGER.warning(msg)
         raise CannotConnect from e
-    finally:
-        await session.close()
 
     # Return info that you want to store in the config entry.
     return {"title": f"Tigo Cloud {data[CONF_SYSTEMID]}"}
