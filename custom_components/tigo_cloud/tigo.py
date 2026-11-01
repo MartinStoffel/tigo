@@ -1,5 +1,6 @@
 """Business Logic for Tigo."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
@@ -14,8 +15,20 @@ from .const import TIGO_URL
 
 _LOGGER = logging.getLogger(__name__)
 
-# Time between updating data
+# Time between updating data, for the premium plan and while the plan is unknown.
 SCAN_INTERVAL = timedelta(minutes=1)
+# The data of the free plan changes only about every 15 minutes.
+FREE_SCAN_INTERVAL = timedelta(minutes=5)
+
+# Tigo's servers often answer with a server error (5xx) and succeed a few seconds
+# later. Its web portal retries after 5 seconds as well.
+RETRIES = 2
+RETRY_DELAY = 5  # seconds
+
+# Module readings. The free plan covers power and reclaimed power (and the energy,
+# read separately), all others need the premium plan.
+MODULE_READINGS = ("pin", "rssi", "pwm", "temp", "vin", "vout", "iin", "reclaimedPower")
+FREE_READINGS = ("pin", "reclaimedPower")
 
 
 class TigoError(Exception):
@@ -67,10 +80,15 @@ class CookieCache:
 
     async def getJson(self, query: str, headers: dict[str, str] | None = None) -> Any:
         """Return the JSON answer of a GET request to the Tigo cloud."""
-        async with self._session.get(TIGO_URL + query, headers=headers) as response:
-            if response.status != 200:
-                raise TigoError(f"{query} returned status {response.status}")
-            return await response.json()
+        for attempt in range(1 + RETRIES):
+            if attempt:
+                await asyncio.sleep(RETRY_DELAY)
+            async with self._session.get(TIGO_URL + query, headers=headers) as response:
+                if response.status == 200:
+                    return await response.json()
+                if response.status < 500:
+                    break
+        raise TigoError(f"{query} returned status {response.status}")
 
     async def __getCookie(self) -> Any:
         """Get the cookie from a web login."""
@@ -142,16 +160,30 @@ class TigoData:
         self._systemId = systemid
         self._lastTime = None
         self._data = {}
-        # Readings that arrived at least once, and readings failing right now.
+        # Readings that had a value at least once, and readings failing right now.
         self._delivered: set[str] = set()
         self._failing: set[str] = set()
+        # Whether the system has the premium plan, None while unknown.
+        self._premium: bool | None = None
+        self._planDate = None
+
+    @staticmethod
+    def _has_data(reading: Any) -> bool:
+        """Return whether a reading has a value, for module readings of any panel."""
+        if isinstance(reading, dict):
+            dataset = reading.get("dataset")
+            return isinstance(dataset, dict) and any(
+                v is not None for v in dataset.values()
+            )
+        return reading is not None
 
     def _store(self, key: str, value: Any) -> None:
         """Store a reading that arrived."""
         if key in self._failing and key in self._delivered:
             _LOGGER.info("Tigo sends %s again", key)
         self._failing.discard(key)
-        self._delivered.add(key)
+        if self._has_data(value):
+            self._delivered.add(key)
         self._data[key] = value
 
     def _drop(self, key: str, err: Exception) -> None:
@@ -161,9 +193,26 @@ class TigoData:
         if key in self._failing:
             return
         self._failing.add(key)
-        # Data the license does not cover always fails, that is no reason to warn.
+        # Data the plan does not cover may never have a value, that is no reason to warn.
         level = logging.WARNING if key in self._delivered else logging.DEBUG
         _LOGGER.log(level, "Tigo did not send %s: %s", key, err)
+
+    async def _update_plan(self, date, authHeader) -> None:
+        """Read once a day whether the system has the premium plan."""
+        if self._planDate == date:
+            return
+        query = f"/system/summary/systeminfo?system_id={self._systemId}&date={date}&resourceId=dateinfo-{date}&v=0.1.0&_=0"
+        try:
+            info = await self._cookieCache.getJson(query, authHeader)
+            premium = info.get("has_premium")
+        except Exception as e:
+            # Keep the plan known so far, and try again on the next update.
+            _LOGGER.debug("Reading the plan failed: %s", e)
+            return
+        if isinstance(premium, bool) and premium != self._premium:
+            _LOGGER.debug("The system has the %s plan", "premium" if premium else "free")
+            self._premium = premium
+        self._planDate = date
 
     def get_value(self, graph) -> Any:
         """Return the reading, None if the graph has no solar total."""
@@ -192,6 +241,8 @@ class TigoData:
         self._data["energyRaw"] = val
         self._data["energy"] = {"dataset": val["dataset"]}
 
+        await self._update_plan(date, authHeader)
+
         time = self._lastTime
 
         for x in val["datasetLastData"]:
@@ -199,16 +250,10 @@ class TigoData:
             break
         if self._lastTime != time:
             self._lastTime = time
-            for value in (
-                "pin",
-                "rssi",
-                "pwm",
-                "temp",
-                "vin",
-                "vout",
-                "iin",
-                "reclaimedPower",
-            ):
+            for value in MODULE_READINGS:
+                if self._premium is False and value not in FREE_READINGS:
+                    self._data.pop(value, None)
+                    continue
                 try:
                     query = f"/api/v4/system/summary/lastvalue?system_id={self._systemId}&resourceId=lastValue-{date}-{value}-{time}&v=0.1.0&_=0"
                     self._store(
@@ -243,9 +288,19 @@ class TigoData:
         reading = self._data.get(property)
         return reading.get("dataset") if reading else None
 
+    def has_reading(self, property) -> bool:
+        """Return whether any panel has a reading of property."""
+        return self._has_data(self._data.get(property))
+
     def get_summary(self, property) -> Any:
         """Return summary reading."""
         return self._data.get(property)
+
+    def get_plan(self) -> str | None:
+        """Return the plan of the system, None while unknown."""
+        if self._premium is None:
+            return None
+        return "Premium" if self._premium else "Free"
 
 
 # see https://developers.home-assistant.io/docs/integration_fetching_data/
@@ -266,10 +321,14 @@ class TigoCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         try:
-            return await self.tigo_data.fetch_data()
+            await self.tigo_data.fetch_data()
         except TigoError as e:
             # Marks the sensors unavailable until an update succeeds.
             raise UpdateFailed(str(e)) from e
+        # Applies from the next update on.
+        self.update_interval = (
+            FREE_SCAN_INTERVAL if self.tigo_data.get_plan() == "Free" else SCAN_INTERVAL
+        )
 
     def get_panels(self) -> Any:
         """Return the panels of the system."""
@@ -285,9 +344,12 @@ class TigoCoordinator(DataUpdateCoordinator):
 
     def has_reading(self, property) -> bool:
         """Return whether any panel has a reading of property."""
-        reading = self.tigo_data.get_reading(property)
-        return reading is not None and any(v is not None for v in reading.values())
+        return self.tigo_data.has_reading(property)
 
     def get_summary(self, property) -> Any:
         """Get the summary reading."""
         return self.tigo_data.get_summary(property)
+
+    def get_plan(self) -> str | None:
+        """Get the plan of the system, None while unknown."""
+        return self.tigo_data.get_plan()
