@@ -15,8 +15,10 @@ from .const import TIGO_URL
 
 _LOGGER = logging.getLogger(__name__)
 
-# Time between updating data
+# Time between updating data, for the premium plan and while the plan is unknown.
 SCAN_INTERVAL = timedelta(minutes=1)
+# The data of the free plan changes only about every 15 minutes.
+FREE_SCAN_INTERVAL = timedelta(minutes=5)
 
 # Tigo's servers often answer with a server error (5xx) and succeed a few seconds
 # later. Its web portal retries after 5 seconds as well.
@@ -294,6 +296,12 @@ class TigoData:
         """Return summary reading."""
         return self._data.get(property)
 
+    def get_plan(self) -> str | None:
+        """Return the plan of the system, None while unknown."""
+        if self._premium is None:
+            return None
+        return "Premium" if self._premium else "Free"
+
 
 # see https://developers.home-assistant.io/docs/integration_fetching_data/
 class TigoCoordinator(DataUpdateCoordinator):
@@ -313,10 +321,14 @@ class TigoCoordinator(DataUpdateCoordinator):
 
     async def _async_update_data(self):
         try:
-            return await self.tigo_data.fetch_data()
+            await self.tigo_data.fetch_data()
         except TigoError as e:
             # Marks the sensors unavailable until an update succeeds.
             raise UpdateFailed(str(e)) from e
+        # Applies from the next update on.
+        self.update_interval = (
+            FREE_SCAN_INTERVAL if self.tigo_data.get_plan() == "Free" else SCAN_INTERVAL
+        )
 
     def get_panels(self) -> Any:
         """Return the panels of the system."""
@@ -337,3 +349,7 @@ class TigoCoordinator(DataUpdateCoordinator):
     def get_summary(self, property) -> Any:
         """Get the summary reading."""
         return self.tigo_data.get_summary(property)
+
+    def get_plan(self) -> str | None:
+        """Get the plan of the system, None while unknown."""
+        return self.tigo_data.get_plan()

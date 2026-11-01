@@ -10,6 +10,7 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    EntityCategory,
     UnitOfElectricCurrent,
     UnitOfElectricPotential,
     UnitOfEnergy,
@@ -20,7 +21,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_SYSTEMID, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -167,6 +168,10 @@ async def async_setup_entry(
                 added.add(key)
                 entities.append(TigoSummarySensor(coordinator, key))
 
+        if "plan" not in added and coordinator.get_plan() is not None:
+            added.add("plan")
+            entities.append(TigoPlanSensor(coordinator, config.data[CONF_SYSTEMID]))
+
         if entities:
             add_entities(entities)
 
@@ -204,6 +209,32 @@ class TigoSummarySensor(CoordinatorEntity, SensorEntity):
     def update(self) -> None:
         """Update the data values."""
         self._attr_native_value = self.coordinator.get_summary(self._property)
+
+
+class TigoPlanSensor(CoordinatorEntity, SensorEntity):
+    """The Tigo plan of the system, free or premium."""
+
+    _attr_name = "Tigo Plan"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = ["Free", "Premium"]
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_icon = "mdi:license"
+
+    def __init__(self, coordinator, systemid) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self._attr_unique_id = DOMAIN + "tigo.plan." + systemid
+        self.update()
+
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        self.update()
+        self.async_write_ha_state()
+
+    def update(self) -> None:
+        """Update the data values."""
+        self._attr_native_value = self.coordinator.get_plan()
 
 
 class TigoPanelSensor(CoordinatorEntity, SensorEntity):
