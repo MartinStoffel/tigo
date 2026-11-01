@@ -142,6 +142,28 @@ class TigoData:
         self._systemId = systemid
         self._lastTime = None
         self._data = {}
+        # Readings that arrived at least once, and readings failing right now.
+        self._delivered: set[str] = set()
+        self._failing: set[str] = set()
+
+    def _store(self, key: str, value: Any) -> None:
+        """Store a reading that arrived."""
+        if key in self._failing and key in self._delivered:
+            _LOGGER.info("Tigo sends %s again", key)
+        self._failing.discard(key)
+        self._delivered.add(key)
+        self._data[key] = value
+
+    def _drop(self, key: str, err: Exception) -> None:
+        """Forget a reading that failed, logged once per failure streak."""
+        # Show unknown rather than the reading of an earlier time.
+        self._data.pop(key, None)
+        if key in self._failing:
+            return
+        self._failing.add(key)
+        # Data the license does not cover always fails, that is no reason to warn.
+        level = logging.WARNING if key in self._delivered else logging.DEBUG
+        _LOGGER.log(level, "Tigo did not send %s: %s", key, err)
 
     def get_value(self, graph) -> Any:
         """Return the reading, None if the graph has no solar total."""
@@ -189,34 +211,28 @@ class TigoData:
             ):
                 try:
                     query = f"/api/v4/system/summary/lastvalue?system_id={self._systemId}&resourceId=lastValue-{date}-{value}-{time}&v=0.1.0&_=0"
-                    self._data[value] = await self._cookieCache.getJson(
-                        query, authHeader
+                    self._store(
+                        value, await self._cookieCache.getJson(query, authHeader)
                     )
                 except Exception as e:
-                    msg = f"{e.__class__} occurred details: {e}"
-                    _LOGGER.warning(msg)
-                    # Show unknown rather than the reading of an earlier time.
-                    self._data.pop(value, None)
+                    self._drop(value, e)
 
         # Get summary data
         for agg in ("now", "hour", "day", "month", "year"):
             try:
                 query = f"/api/v4/data/aggregate?systemId={self._systemId}&view=gen&output=echart&type=bar&agg={agg}&start={date}&end={date}&reclaimed=true"
-                self._data[agg] = self.get_value(
-                    await self._cookieCache.getJson(query, authHeader)
+                self._store(
+                    agg,
+                    self.get_value(await self._cookieCache.getJson(query, authHeader)),
                 )
             except Exception as e:
-                msg = f"{e.__class__} occurred details: {e}"
-                _LOGGER.warning(msg)
-                self._data.pop(agg, None)
+                self._drop(agg, e)
         try:
             query = f"/fleet/system/overview/data-lifetime?sysid={self._systemId}&range=lifetime"
             value = await self._cookieCache.getJson(query, authHeader)
-            self._data["allTime"] = value["energy"]
+            self._store("allTime", value["energy"])
         except Exception as e:
-            msg = f"{e.__class__} occurred details: {e}"
-            _LOGGER.warning(msg)
-            self._data.pop("allTime", None)
+            self._drop("allTime", e)
 
     def get_system(self) -> Any:
         """Return the system data."""
