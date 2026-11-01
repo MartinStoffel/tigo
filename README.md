@@ -1,4 +1,7 @@
 # Tigo
+
+> **Replaced by [Tigo Cloud](https://github.com/MartinStoffel/tigo_cloud)**, which supports several systems. Install Tigo Cloud via HACS and confirm the discovered Tigo system: it takes over your system, and the sensors keep their entity ids, history and statistics. Then remove this integration from HACS. See the [Tigo Cloud README](https://github.com/MartinStoffel/tigo_cloud#coming-from-the-legacy-tigo-integration) for details.
+
 Integration of the Tigo Cloud into Home Assistant
 
 Currently quite basic, just integrates the panel data, since that is the Tigo hardware I have. 

@@ -18,5 +18,11 @@
                 }
             }
         }
+    },
+    "issues": {
+        "moved": {
+            "title": "Switch to the new Tigo cloud integration",
+            "description": "This legacy integration is replaced by the new Tigo cloud integration, which supports several systems. It takes over your system, and its sensors keep their entity ids, history and statistics.\n\nInstall Tigo cloud {version} or later via HACS (repository MartinStoffel/tigo_cloud) and restart Home Assistant, then confirm the discovered Tigo system under Settings → Devices & services. Afterwards remove this integration from HACS."
+        }
     }
 }
